@@ -1,0 +1,162 @@
+GML Memory System - Relationship Examples (ASCII)
+==================================================
+
+The RELATIONSHIPS contain the real knowledge, not the nodes!
+
+
+Example 1: Path Correction
+---------------------------
+
+    [Claim: auth repo at ../auth-service]
+                    |
+                    | CORRECTS
+                    |  corrected_at: interaction 847
+                    |  my_wrong_guess: "./services/auth"
+                    |  your_frustration: "high"
+                    |  pattern_of_error: "hallucinated path"
+                    |  why_wrong: "made up ./services/ pattern"
+                    |  times_made_mistake: 3
+                    |  related_mistakes: ["./lib/", "./components/"]
+                    |  confidence_before: 0.6
+                    |  confidence_after: 1.0
+                    |  time_since_told: 805 interactions
+                    |  should_have_remembered: true
+                    ↓
+    [Claim: auth repo at ./services/auth] (REFUTED)
+
+
+Example 2: Solution Pattern
+----------------------------
+
+    [Problem: AttributeError NoneType]
+                    ↑
+                    | SOLVED
+                    |  problem_sig: "type error payment"
+                    |  root_cause: "missing null checks"
+                    |  why_worked: "forces explicit Optional[T]"
+                    |  side_benefits: ["caught 3 bugs", "better IDE"]
+                    |  time_to_implement: 45min
+                    |  bugs_fixed: 4
+                    |  bugs_introduced: 0
+                    |  tests_before: 23
+                    |  tests_after: 27
+                    |  applicable_to: "any Optional fields"
+                    |  pattern_name: "dataclass-optional"
+                    |  would_use_again: true
+                    |
+    [Solution: use dataclass with type hints]
+                    |
+                     APPLIED_IN 
+                    |   task: "fix order processor"   |
+                    |   adapted: "used Decimal"       |
+                    |   outcome: success              |
+                    |   effectiveness: 0.9             |
+                    |   time_to_apply: 20min          |
+                    |   bugs_fixed: 1                 |
+                    |                                    ↓
+                    |                    [Application: fixed order processor]
+                    |
+                     APPLIED_IN 
+                        task: "fix invoice handler"  |
+                        outcome: success             |
+                        effectiveness: 0.85           |
+                        time_to_apply: 15min         |
+                        bugs_fixed: 2                |
+                                                        ↓
+                                        [Application: fixed invoice handler]
+
+
+Example 3: Evolving Understanding
+----------------------------------
+
+    [Claim: tests at __tests__/ at root] (NEW)
+                    |
+                    | SUPERSEDES
+                    |  what_changed: "tests at root not src"
+                    |  trigger: "you showed actual structure"
+                    |  old_confidence: 0.6
+                    |  new_confidence: 0.95
+                    |  evidence_type: "direct observation"
+                    |  affects: ["where to create tests"]
+                    |  invalidates: ["created test in src/__tests__/"]
+                    |  why_wrong_before: "inferred from 1 example"
+                    |  lesson: "verify patterns across multiple examples"
+                    |  cognitive_error: "hasty generalization"
+                    |  times_used_wrong: 3
+                    ↓
+    [Claim: tests at src/__tests__/] (SUPERSEDED)
+
+
+Example 4: Inference Chain
+---------------------------
+
+    [Premise: auth repo at ../auth-service]
+                    |
+                    | DERIVES
+                    |  inference_type: deductive
+                    |  reasoning: "IF auth at X AND tests at Y THEN auth tests at X/Y"
+                    |  premise_confidence: 1.0
+                    |  conclusion_confidence: 0.9
+                    |  needs_verification: true
+                    |  depends_on: ["claim_auth_loc", "claim_test_pattern"]
+                    |  invalidated_if_premises_change: true
+                    ↓
+    [Inference: auth tests at ../auth-service/__tests__/]
+                    ↑
+                    | VALIDATES
+                    |  validation_type: empirical
+                    |  method: file_system_check
+                    |  validation_strength: 1.0
+                    |  confidence_boost: +0.05
+                    |  validates_aspect: "path_exists"
+                    |  promotes_to_fact: true
+                    |  reproducible: true
+                    |
+    [Validation: directory exists]
+
+
+Example 5: Recurring Mistakes
+------------------------------
+
+    [Mistake: ./services/auth] 
+                                  |
+    [Mistake: ./lib/utils] 
+                                  | INSTANCE_OF
+    [Mistake: ./components/Btn]   pattern_match: 0.95
+                                  |  your_frustration: "high"
+                                  |  should_have_known: true
+                                  |  time_since_told_correct: 805
+                                  ↓
+                    [Error Pattern: hallucinate ./folder/ structure]
+                                  |
+                                  | CAUSED_BY
+                                  |  confidence: 0.9
+                                  |  analysis: "I assume standard layouts"
+                                  |  why_i_do_this: "trained on common patterns"
+                                  |  when_it_fails: "non-standard repos"
+                                  ↓
+                    [Root Cause: assume structure without verification]
+                                  |
+                                  | SUGGESTS
+                                  |  solution_type: "behavioral change"
+                                  |  confidence: 0.8
+                                  |  implementation: "query memory first"
+                                  |  expected_reduction: 0.9
+                                  ↓
+                    [Solution: always query memory before assuming paths]
+
+
+KEY INSIGHT
+===========
+
+The nodes are just labels. The RELATIONSHIPS contain:
+  * WHY things happened
+  * HOW I learned
+  * WHAT mistakes I made
+  * WHEN to use which approach
+  * HOW CONFIDENT I should be
+  * WHAT evidence supports claims
+  * HOW understanding evolved
+
+This is where the real knowledge lives! 
+

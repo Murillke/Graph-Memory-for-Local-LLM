@@ -1,0 +1,62 @@
+{
+  "project_name": "llm_memory",
+  "python_path": "python3.11",
+  "database": {
+    "sql_path": "./memory/conversations.db",
+    "graph_path": "./memory/{project_name}.graph"
+  },
+  "extraction": {
+    "version": "v1.0.0",
+    "skip_quality_check": false,
+    "llm_wrapper_entities": "",
+    "llm_wrapper_facts": "",
+    "_comment_extraction_wrappers": "Available wrappers: extraction_wrapper_auggie.py, extraction_wrapper_codex.py, extraction_wrapper_claude.py, extraction_wrapper_ollama.py, or leave empty for manual extraction",
+    "prompts": {
+      "entities": "./prompts/extract-entities.md",
+      "facts": "./prompts/extract-facts.md"
+    }
+  },
+  "paths": {
+    "tmp_dir": "./tmp",
+    "memory_dir": "./memory"
+  },
+  "quality_check": {
+    "enabled": true,
+    "llm_wrapper": "",
+    "_comment_llm_wrapper": "Available wrappers: llm_wrapper_auggie.py, llm_wrapper_codex.py, llm_wrapper_claude.py, llm_wrapper_ollama.py, llm_wrapper_manual.py, or leave empty for manual review",
+    "questions_file": "quality-questions.json",
+    "answers_file": "quality-answers.json",
+    "prompts": {
+      "duplicates": "./prompts/quality-check-duplicates.md",
+      "contradictions": "./prompts/quality-check-contradictions.md"
+    }
+  },
+  "consolidation": {
+    "auto_cleanup_enabled": false,
+    "archive_after_days": 180,
+    "last_run_timestamp": "2026-03-14T02:35:42.053544",
+    "recommend_after_days": 30,
+    "_comment": "Hub detection and neighborhood analysis settings"
+  },
+  "temp_file_cleanup": {
+    "enabled": true,
+    "keep_days": 30,
+    "recommend_after_days": 30,
+    "last_cleanup_timestamp": null,
+    "_comment": "Cleanup reminders for old temp files"
+  },
+  "mcp": {
+    "_comment": "MCP server configuration. See docs/MCP-IMPLEMENTATION-SPEC.md",
+    "network_mode": "localhost",
+    "bind_host": "127.0.0.1",
+    "bind_port": 8765,
+    "tls_enabled": false,
+    "tls_cert_path": null,
+    "tls_key_path": null,
+    "tls_verify_client": false,
+    "allowed_subnets": [],
+    "deny_public_ips": true,
+    "_comment_network_mode": "Options: 'localhost' (default, safest) or 'private' (requires TLS and allowed_subnets)",
+    "_comment_private_example": "For private mode: set bind_host to your server IP, tls_enabled=true, add subnets like ['10.8.0.0/24']"
+  }
+}

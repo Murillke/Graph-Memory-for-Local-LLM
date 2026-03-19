@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Memory Graph - D3.js Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        /* Animated background stars */
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                radial-gradient(2px 2px at 20px 30px, #eee, rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 60px 70px, #fff, rgba(0,0,0,0)),
+                radial-gradient(1px 1px at 50px 50px, #fff, rgba(0,0,0,0)),
+                radial-gradient(1px 1px at 130px 80px, #fff, rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 90px 10px, #fff, rgba(0,0,0,0));
+            background-repeat: repeat;
+            background-size: 200px 200px;
+            animation: twinkle 4s ease-in-out infinite;
+            pointer-events: none;
+            opacity: 0.5;
+        }
+
+        #container {
+            display: flex;
+            height: 100vh;
+        }
+
+        #header {
+            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            box-shadow: 4px 0 6px rgba(0,0,0,0.3);
+            width: 280px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        #controls {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .control-group-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.6);
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+
+        .btn {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s;
+            text-align: center;
+            width: 100%;
+        }
+
+        .btn:hover {
+            background: rgba(255,255,255,0.3);
+            transform: translateX(4px);
+        }
+
+        .btn.active {
+            background: rgba(255,255,255,0.4);
+            border-color: white;
+            box-shadow: 0 0 15px rgba(255,255,255,0.3);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        label.btn {
+            display: inline-block;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 6px;
+            color: white;
+            font-size: 13px;
+            transition: all 0.3s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            background: rgba(255,255,255,0.15);
+            border-color: rgba(255,255,255,0.4);
+            box-shadow: 0 0 10px rgba(102, 126, 234, 0.3);
+        }
+
+        .search-input::placeholder {
+            color: rgba(255,255,255,0.5);
+        }
+
+        .filter-checks {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .filter-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            padding: 6px 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .filter-label:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .filter-label input[type="checkbox"] {
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+        }
+
+        #stats {
+            background: rgba(255,255,255,0.1);
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            text-align: center;
+            line-height: 1.6;
+        }
+
+        #main {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+        }
+
+        #graph {
+            width: 100%;
+            height: 100%;
+        }
+
+        #sidebar {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 350px;
+            height: 100%;
+            background: rgba(10, 14, 39, 0.95);
+            border-left: 1px solid rgba(255,255,255,0.1);
+            padding: 20px;
+            overflow-y: auto;
+            transform: translateX(100%);
+            transition: transform 0.3s;
+            box-shadow: -4px 0 10px rgba(0,0,0,0.3);
+        }
+
+        #sidebar.open {
+            transform: translateX(0);
+        }
+
+        #sidebar h2 {
+            font-size: 20px;
+            margin-bottom: 15px;
+            color: #667eea;
+        }
+
+        #sidebar .field {
+            margin-bottom: 15px;
+        }
+
+        #sidebar .label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+
+        #sidebar .value {
+            font-size: 14px;
+            color: #e0e0e0;
+            word-wrap: break-word;
+        }
+
+        .node {
+            cursor: pointer;
+            filter: drop-shadow(0 0 8px rgba(102, 126, 234, 0.6));
+        }
+
+        .node:hover {
+            filter: drop-shadow(0 0 15px rgba(102, 126, 234, 0.9));
+        }
+
+        .node.selected {
+            filter: drop-shadow(0 0 25px rgba(255, 215, 0, 1));
+        }
+
+        .node circle {
+            stroke-width: 3px;
+            stroke: rgba(255, 255, 255, 0.8);
+        }
+
+        .node text {
+            font-size: 12px;
+            font-weight: 600;
+            pointer-events: none;
+            text-shadow:
+                0 0 10px rgba(0,0,0,0.9),
+                0 0 20px rgba(0,0,0,0.6),
+                0 1px 3px rgba(0,0,0,0.8);
+            fill: #fff;
+        }
+
+        .link {
+            stroke-opacity: 0.4;
+            transition: all 0.3s;
+            stroke: url(#link-gradient);
+            filter: drop-shadow(0 0 2px rgba(102, 126, 234, 0.3));
+        }
+
+        .link:hover {
+            stroke-opacity: 1;
+            stroke-width: 4px !important;
+            filter: drop-shadow(0 0 8px rgba(102, 126, 234, 0.8));
+        }
+
+        .link.highlighted {
+            stroke-opacity: 1;
+            stroke-width: 4px;
+            filter: drop-shadow(0 0 10px rgba(255, 215, 0, 0.8));
+        }
+
+        .link-label {
+            font-size: 11px;
+            font-weight: 500;
+            fill: #b8c5db;
+            pointer-events: none;
+            text-shadow:
+                0 0 8px rgba(0,0,0,0.9),
+                0 1px 2px rgba(0,0,0,0.8);
+            opacity: 0.8;
+        }
+
+        .link-label:hover {
+            opacity: 1;
+        }
+
+        #tooltip {
+            position: absolute;
+            background: rgba(0,0,0,0.9);
+            color: white;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            max-width: 300px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        #legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(10, 14, 39, 0.95);
+            padding: 18px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.15);
+            max-width: 250px;
+            backdrop-filter: blur(10px);
+        }
+
+        #legend h3 {
+            font-size: 13px;
+            margin-bottom: 12px;
+            color: #667eea;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .legend-item:hover {
+            transform: translateX(4px);
+        }
+
+        .legend-color {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.4);
+            box-shadow: 0 0 10px currentColor;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="header">
+            <h1>🧠 LLM Memory</h1>
+            <div id="controls">
+                <div class="control-group">
+                    <div class="control-group-title">Data</div>
+                    <label for="fileInput" class="btn">📁 Load Graph JSON</label>
+                    <input type="file" id="fileInput" accept=".json">
+                </div>
+
+                <div class="control-group">
+                    <div class="control-group-title">Layout</div>
+                    <button class="btn active" id="btnForce">🌐 Force</button>
+                    <button class="btn" id="btnTemporal">⏰ Temporal</button>
+                </div>
+
+                <div class="control-group" id="temporalControls" style="display: none;">
+                    <div class="control-group-title">Animation</div>
+                    <button class="btn" id="btnPlay">▶️ Play</button>
+                    <input type="range" id="timeSlider" min="0" max="100" value="0" style="width: 100%;">
+                    <div id="timeLabel" style="text-align: center; font-size: 11px; color: rgba(255,255,255,0.7);"></div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-group-title">Filter</div>
+                    <input type="text" id="searchBox" placeholder="🔍 Search entities..." class="search-input">
+                    <div class="filter-checks">
+                        <label class="filter-label">
+                            <input type="checkbox" id="filterActive" checked> Active
+                        </label>
+                        <label class="filter-label">
+                            <input type="checkbox" id="filterSuperseded"> Superseded
+                        </label>
+                        <label class="filter-label">
+                            <input type="checkbox" id="filterInvalidated"> Invalidated
+                        </label>
+                        <label class="filter-label">
+                            <input type="checkbox" id="filterDeprecated"> Deprecated
+                        </label>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-group-title">View</div>
+                    <button class="btn" id="btnReset">🔄 Reset</button>
+                    <button class="btn" id="btnClearFilters">✖️ Clear Filters</button>
+                </div>
+
+                <div id="stats">No data loaded</div>
+            </div>
+        </div>
+        <div id="main">
+            <svg id="graph"></svg>
+            <div id="sidebar">
+                <h2 id="sidebarTitle">Select a node</h2>
+                <div id="sidebarContent"></div>
+            </div>
+            <div id="legend">
+                <h3>Entity Types</h3>
+                <div id="legendContent"></div>
+            </div>
+            <div id="tooltip"></div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const config = {
+            width: window.innerWidth - 280, // Subtract sidebar width
+            height: window.innerHeight,
+            nodeRadius: 10,
+            linkDistance: 80,
+            chargeStrength: -200,
+            colors: {
+                'Feature': '#00ff88',
+                'Fix': '#ff3366',
+                'Architecture': '#00d4ff',
+                'Finding': '#ffaa00',
+                'Issue': '#ff0066',
+                'Documentation': '#cc66ff',
+                'Requirement': '#00ffff',
+                'Maintenance': '#ff9966',
+                'default': '#8899ff'
+            }
+        };
+
+        // State
+        let graphData = { nodes: [], links: [] };
+        let simulation;
+        let currentLayout = 'force';
+        let temporalState = {
+            playing: false,
+            currentTime: 0,
+            maxTime: 0,
+            interval: null,
+            speed: 100 // ms per step
+        };
+        let filterState = {
+            searchText: '',
+            showActive: true,
+            showSuperseded: false,
+            showInvalidated: false,
+            showDeprecated: false
+        };
+
+        // D3 selections
+        const svg = d3.select('#graph')
+            .attr('width', config.width)
+            .attr('height', config.height);
+
+        const g = svg.append('g');
+
+        // Zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 4])
+            .on('zoom', (event) => {
+                g.attr('transform', event.transform);
+            });
+
+        svg.call(zoom);
+
+        // File input handler
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        loadGraph(data);
+                    } catch (error) {
+                        alert('Error parsing JSON: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        // Layout buttons
+        document.getElementById('btnForce').addEventListener('click', () => switchLayout('force'));
+        document.getElementById('btnTemporal').addEventListener('click', () => switchLayout('temporal'));
+        document.getElementById('btnReset').addEventListener('click', resetView);
+
+        // Temporal controls
+        document.getElementById('btnPlay').addEventListener('click', toggleTemporalPlay);
+        document.getElementById('timeSlider').addEventListener('input', function(e) {
+            temporalState.currentTime = parseInt(e.target.value);
+            updateTemporalView();
+        });
+
+        // Filter controls
+        document.getElementById('searchBox').addEventListener('input', function(e) {
+            filterState.searchText = e.target.value.toLowerCase();
+            applyFilters();
+        });
+
+        document.getElementById('filterActive').addEventListener('change', function(e) {
+            filterState.showActive = e.target.checked;
+            applyFilters();
+        });
+
+        document.getElementById('filterSuperseded').addEventListener('change', function(e) {
+            filterState.showSuperseded = e.target.checked;
+            applyFilters();
+        });
+
+        document.getElementById('filterInvalidated').addEventListener('change', function(e) {
+            filterState.showInvalidated = e.target.checked;
+            applyFilters();
+        });
+
+        document.getElementById('filterDeprecated').addEventListener('change', function(e) {
+            filterState.showDeprecated = e.target.checked;
+            applyFilters();
+        });
+
+        document.getElementById('btnClearFilters').addEventListener('click', function() {
+            document.getElementById('searchBox').value = '';
+            document.getElementById('filterActive').checked = true;
+            document.getElementById('filterSuperseded').checked = false;
+            document.getElementById('filterInvalidated').checked = false;
+            document.getElementById('filterDeprecated').checked = false;
+            filterState = {
+                searchText: '',
+                showActive: true,
+                showSuperseded: false,
+                showInvalidated: false,
+                showDeprecated: false
+            };
+            applyFilters();
+        });
+
+        function loadGraph(data) {
+            graphData = processData(data);
+            updateStats();
+            updateLegend();
+            renderGraph();
+        }
+
+        function processData(data) {
+            // Handle both export formats
+            const nodes = data.nodes.map(n => ({
+                id: n.id || n.uuid,
+                name: n.name,
+                type: n.type || 'default',
+                summary: n.summary,
+                created_at: n.created_at || new Date().toISOString(),
+                ...n
+            }));
+
+            const links = (data.links || data.relationships || []).map(r => ({
+                source: r.source || r.source_uuid,
+                target: r.target || r.target_uuid,
+                type: r.type || r.name,
+                ...r
+            }));
+
+            return { nodes, links };
+        }
+
+        function updateStats() {
+            const stats = `${graphData.nodes.length} entities • ${graphData.links.length} relationships`;
+            document.getElementById('stats').textContent = stats;
+        }
+
+        function updateLegend() {
+            const types = [...new Set(graphData.nodes.map(n => n.type))];
+            const legendContent = document.getElementById('legendContent');
+            legendContent.innerHTML = types.map(type => `
+                <div class="legend-item">
+                    <div class="legend-color" style="background: ${config.colors[type] || config.colors.default}"></div>
+                    <span>${type}</span>
+                </div>
+            `).join('');
+        }
+
+        function renderGraph() {
+            // Stop any running simulation
+            if (simulation) {
+                simulation.stop();
+            }
+
+            // Clear existing
+            g.selectAll('*').remove();
+
+            // Reset node positions
+            graphData.nodes.forEach(n => {
+                delete n.fx;
+                delete n.fy;
+            });
+
+            // Add gradients and filters
+            const defs = svg.select('defs').empty() ? svg.append('defs') : svg.select('defs');
+
+            // Link gradient
+            const gradient = defs.append('linearGradient')
+                .attr('id', 'link-gradient')
+                .attr('gradientUnits', 'userSpaceOnUse');
+
+            gradient.append('stop')
+                .attr('offset', '0%')
+                .attr('stop-color', '#667eea')
+                .attr('stop-opacity', 0.8);
+
+            gradient.append('stop')
+                .attr('offset', '100%')
+                .attr('stop-color', '#764ba2')
+                .attr('stop-opacity', 0.8);
+
+            // Glow filter
+            const filter = defs.append('filter')
+                .attr('id', 'glow');
+
+            filter.append('feGaussianBlur')
+                .attr('stdDeviation', '3')
+                .attr('result', 'coloredBlur');
+
+            const feMerge = filter.append('feMerge');
+            feMerge.append('feMergeNode').attr('in', 'coloredBlur');
+            feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+            // Create link elements with particles
+            const linkGroup = g.append('g').attr('class', 'links');
+
+            const link = linkGroup
+                .selectAll('line')
+                .data(graphData.links)
+                .join('line')
+                .attr('class', 'link')
+                .attr('stroke-width', d => Math.max(2, Math.min(5, graphData.links.filter(l =>
+                    l.source === d.source && l.target === d.target
+                ).length)));
+
+            // Create link labels
+            const linkLabel = g.append('g')
+                .selectAll('text')
+                .data(graphData.links)
+                .join('text')
+                .attr('class', 'link-label')
+                .text(d => d.type);
+
+            // Create node groups
+            const node = g.append('g')
+                .selectAll('g')
+                .data(graphData.nodes)
+                .join('g')
+                .attr('class', 'node')
+                .call(drag());
+
+            // Add outer glow circle
+            node.append('circle')
+                .attr('r', config.nodeRadius + 4)
+                .attr('fill', 'none')
+                .attr('stroke', d => config.colors[d.type] || config.colors.default)
+                .attr('stroke-width', 2)
+                .attr('opacity', 0.3)
+                .attr('filter', 'url(#glow)');
+
+            // Add main circle
+            node.append('circle')
+                .attr('r', config.nodeRadius)
+                .attr('fill', d => {
+                    const color = d3.color(config.colors[d.type] || config.colors.default);
+                    return `radial-gradient(circle, ${color.brighter(0.5)}, ${color})`;
+                })
+                .attr('stroke', '#fff')
+                .attr('stroke-width', 2.5)
+                .style('fill', d => config.colors[d.type] || config.colors.default);
+
+            // Add labels to nodes
+            node.append('text')
+                .attr('dx', 12)
+                .attr('dy', 4)
+                .attr('fill', '#fff')
+                .text(d => d.name.length > 30 ? d.name.substring(0, 30) + '...' : d.name);
+
+            // Node interactions
+            node.on('click', showNodeDetails)
+                .style('cursor', 'pointer');
+
+            // Create simulation
+            if (currentLayout === 'force') {
+                createForceSimulation(node, link, linkLabel);
+            } else if (currentLayout === 'temporal') {
+                createTemporalLayout(node, link, linkLabel);
+            }
+        }
+
+        function createForceSimulation(node, link, linkLabel) {
+            // Reset all visibility
+            node.style('opacity', 1).style('pointer-events', 'all');
+            link.style('opacity', 0.4);
+            linkLabel.style('opacity', 0.8);
+
+            simulation = d3.forceSimulation(graphData.nodes)
+                .force('link', d3.forceLink(graphData.links)
+                    .id(d => d.id)
+                    .distance(config.linkDistance))
+                .force('charge', d3.forceManyBody()
+                    .strength(config.chargeStrength))
+                .force('center', d3.forceCenter(config.width / 2, config.height / 2))
+                .force('collision', d3.forceCollide().radius(config.nodeRadius * 3))
+                .alphaDecay(0.02); // Slower cooling for better settling
+
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                linkLabel
+                    .attr('x', d => (d.source.x + d.target.x) / 2)
+                    .attr('y', d => (d.source.y + d.target.y) / 2);
+
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+        }
+
+        function createTimelineLayout(node, link, linkLabel) {
+            // Sort nodes by creation date
+            const sortedNodes = [...graphData.nodes].sort((a, b) =>
+                new Date(a.created_at) - new Date(b.created_at)
+            );
+
+            const xScale = d3.scaleLinear()
+                .domain([0, sortedNodes.length - 1])
+                .range([100, config.width - 100]);
+
+            const yScale = d3.scaleTime()
+                .domain(d3.extent(sortedNodes, d => new Date(d.created_at)))
+                .range([100, config.height - 100]);
+
+            // Position nodes
+            sortedNodes.forEach((n, i) => {
+                n.x = xScale(i);
+                n.y = yScale(new Date(n.created_at));
+            });
+
+            // Update positions immediately
+            node
+                .attr('transform', d => `translate(${d.x},${d.y})`)
+                .style('opacity', 1)
+                .style('pointer-events', 'all');
+
+            link
+                .attr('x1', d => d.source.x)
+                .attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x)
+                .attr('y2', d => d.target.y)
+                .style('opacity', 0.4);
+
+            linkLabel
+                .attr('x', d => (d.source.x + d.target.x) / 2)
+                .attr('y', d => (d.source.y + d.target.y) / 2)
+                .style('opacity', 0.8);
+        }
+
+        function createRadialLayout(node, link, linkLabel) {
+            const radius = Math.min(config.width, config.height) / 2 - 100;
+            const angleStep = (2 * Math.PI) / graphData.nodes.length;
+
+            graphData.nodes.forEach((n, i) => {
+                const angle = i * angleStep;
+                n.x = config.width / 2 + radius * Math.cos(angle);
+                n.y = config.height / 2 + radius * Math.sin(angle);
+            });
+
+            node
+                .attr('transform', d => `translate(${d.x},${d.y})`)
+                .style('opacity', 1)
+                .style('pointer-events', 'all');
+
+            link
+                .attr('x1', d => d.source.x)
+                .attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x)
+                .attr('y2', d => d.target.y)
+                .style('opacity', 0.4);
+
+            linkLabel
+                .attr('x', d => (d.source.x + d.target.x) / 2)
+                .attr('y', d => (d.source.y + d.target.y) / 2)
+                .style('opacity', 0.8);
+        }
+
+        function createTemporalLayout(node, link, linkLabel) {
+            // Sort nodes by creation time
+            const sortedNodes = [...graphData.nodes].sort((a, b) =>
+                new Date(a.created_at) - new Date(b.created_at)
+            );
+
+            // Set up temporal state
+            temporalState.maxTime = sortedNodes.length;
+            temporalState.currentTime = 0; // Start at beginning
+            document.getElementById('timeSlider').max = sortedNodes.length;
+            document.getElementById('timeSlider').value = 0;
+
+            // Store temporal index on ALL nodes
+            graphData.nodes.forEach(n => {
+                const index = sortedNodes.findIndex(sn => sn.id === n.id);
+                n.temporalIndex = index;
+            });
+
+            // Create force simulation with ALL nodes (but we'll hide them)
+            simulation = d3.forceSimulation(graphData.nodes)
+                .force('link', d3.forceLink(graphData.links)
+                    .id(d => d.id)
+                    .distance(config.linkDistance))
+                .force('charge', d3.forceManyBody()
+                    .strength(config.chargeStrength))
+                .force('center', d3.forceCenter(config.width / 2, config.height / 2))
+                .force('collision', d3.forceCollide().radius(config.nodeRadius * 3))
+                .alphaDecay(0.02);
+
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                linkLabel
+                    .attr('x', d => (d.source.x + d.target.x) / 2)
+                    .attr('y', d => (d.source.y + d.target.y) / 2);
+
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+
+            // Initial update (show nothing at start)
+            updateTemporalView();
+        }
+
+        function updateTemporalView() {
+            const currentTime = temporalState.currentTime;
+
+            // Update time label
+            if (graphData.nodes.length > 0) {
+                const sortedNodes = [...graphData.nodes].sort((a, b) =>
+                    new Date(a.created_at) - new Date(b.created_at)
+                );
+
+                if (currentTime > 0 && currentTime <= sortedNodes.length) {
+                    const currentNode = sortedNodes[currentTime - 1];
+                    const date = new Date(currentNode.created_at);
+                    document.getElementById('timeLabel').textContent =
+                        `${date.toLocaleDateString()} ${date.toLocaleTimeString()} (${currentTime}/${sortedNodes.length})`;
+                } else {
+                    document.getElementById('timeLabel').textContent = 'Start';
+                }
+            }
+
+            // Show/hide nodes and links based on temporal index with animation
+            d3.selectAll('.node')
+                .each(function(d) {
+                    const visible = d.temporalIndex < currentTime;
+                    d3.select(this)
+                        .transition()
+                        .duration(300)
+                        .style('opacity', visible ? 1 : 0)
+                        .style('pointer-events', visible ? 'all' : 'none');
+
+                    // Update transform separately to avoid conflicts
+                    d3.select(this)
+                        .attr('transform', `translate(${d.x || 0},${d.y || 0})`);
+                });
+
+            d3.selectAll('.link')
+                .transition()
+                .duration(300)
+                .style('opacity', d => {
+                    const sourceVisible = d.source.temporalIndex < currentTime;
+                    const targetVisible = d.target.temporalIndex < currentTime;
+                    return (sourceVisible && targetVisible) ? 0.4 : 0;
+                })
+                .style('pointer-events', d => {
+                    const sourceVisible = d.source.temporalIndex < currentTime;
+                    const targetVisible = d.target.temporalIndex < currentTime;
+                    return (sourceVisible && targetVisible) ? 'all' : 'none';
+                });
+
+            d3.selectAll('.link-label')
+                .transition()
+                .duration(300)
+                .style('opacity', d => {
+                    const sourceVisible = d.source.temporalIndex < currentTime;
+                    const targetVisible = d.target.temporalIndex < currentTime;
+                    return (sourceVisible && targetVisible) ? 0.8 : 0;
+                });
+        }
+
+        function toggleTemporalPlay() {
+            const btn = document.getElementById('btnPlay');
+
+            if (temporalState.playing) {
+                // Pause
+                temporalState.playing = false;
+                clearInterval(temporalState.interval);
+                btn.textContent = '▶️ Play';
+            } else {
+                // Play
+                temporalState.playing = true;
+                btn.textContent = '⏸️ Pause';
+
+                temporalState.interval = setInterval(() => {
+                    temporalState.currentTime++;
+
+                    if (temporalState.currentTime > temporalState.maxTime) {
+                        temporalState.currentTime = 0; // Loop
+                    }
+
+                    document.getElementById('timeSlider').value = temporalState.currentTime;
+                    updateTemporalView();
+                }, temporalState.speed);
+            }
+        }
+
+        function switchLayout(layout) {
+            // Stop temporal animation if playing
+            if (temporalState.playing) {
+                toggleTemporalPlay();
+            }
+
+            currentLayout = layout;
+            document.querySelectorAll('#controls .btn').forEach(btn => btn.classList.remove('active'));
+
+            // Handle button name capitalization
+            const btnId = layout === 'temporal' ? 'btnTemporal' :
+                         `btn${layout.charAt(0).toUpperCase() + layout.slice(1)}`;
+            document.getElementById(btnId).classList.add('active');
+
+            // Show/hide temporal controls
+            const temporalControls = document.getElementById('temporalControls');
+            if (layout === 'temporal') {
+                temporalControls.style.display = 'flex';
+            } else {
+                temporalControls.style.display = 'none';
+            }
+
+            if (graphData.nodes.length > 0) {
+                renderGraph();
+            }
+        }
+
+        function resetView() {
+            svg.transition().duration(750).call(
+                zoom.transform,
+                d3.zoomIdentity
+            );
+        }
+
+        function drag() {
+            function dragstarted(event, d) {
+                if (!event.active && simulation) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active && simulation) simulation.alphaTarget(0);
+                if (currentLayout === 'force') {
+                    d.fx = null;
+                    d.fy = null;
+                }
+            }
+
+            return d3.drag()
+                .on('start', dragstarted)
+                .on('drag', dragged)
+                .on('end', dragended);
+        }
+
+        function showNodeDetails(event, d) {
+            // Remove previous selection
+            d3.selectAll('.node').classed('selected', false);
+            d3.selectAll('.link').classed('highlighted', false);
+
+            // Highlight selected node
+            d3.select(event.currentTarget).classed('selected', true);
+
+            // Highlight connected links
+            d3.selectAll('.link')
+                .classed('highlighted', link =>
+                    (link.source.id === d.id || link.target.id === d.id)
+                );
+
+            const sidebar = document.getElementById('sidebar');
+            const title = document.getElementById('sidebarTitle');
+            const content = document.getElementById('sidebarContent');
+
+            // Count connections
+            const connections = graphData.links.filter(l =>
+                l.source.id === d.id || l.target.id === d.id
+            ).length;
+
+            // Get classification
+            const classification = classifyNode(d);
+            let statusBadge = '';
+            let statusColor = '#00ff88';
+
+            if (classification.isSuperseded) {
+                statusBadge = '🔄 Superseded';
+                statusColor = '#ffaa00';
+            } else if (classification.isInvalidated) {
+                statusBadge = '❌ Invalidated';
+                statusColor = '#ff3366';
+            } else if (classification.isDeprecated) {
+                statusBadge = '⚠️ Deprecated';
+                statusColor = '#ff9966';
+            } else {
+                statusBadge = '✅ Active';
+                statusColor = '#00ff88';
+            }
+
+            title.textContent = d.name;
+            content.innerHTML = `
+                <div class="field">
+                    <div class="label">Status</div>
+                    <div class="value" style="color: ${statusColor}; font-weight: 600;">${statusBadge}</div>
+                </div>
+                <div class="field">
+                    <div class="label">Type</div>
+                    <div class="value" style="color: ${config.colors[d.type] || config.colors.default}">${d.type}</div>
+                </div>
+                <div class="field">
+                    <div class="label">UUID</div>
+                    <div class="value" style="font-family: monospace; font-size: 11px;">${d.id}</div>
+                </div>
+                <div class="field">
+                    <div class="label">Created</div>
+                    <div class="value">${new Date(d.created_at).toLocaleString()}</div>
+                </div>
+                <div class="field">
+                    <div class="label">Connections</div>
+                    <div class="value">${classification.incomingCount} incoming • ${classification.outgoingCount} outgoing</div>
+                </div>
+                <div class="field">
+                    <div class="label">Summary</div>
+                    <div class="value">${d.summary || 'No summary available'}</div>
+                </div>
+            `;
+
+            sidebar.classList.add('open');
+        }
+
+        function showTooltip(event, d) {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.style.opacity = 1;
+            // Position tooltip offset from cursor to avoid flickering
+            tooltip.style.left = (event.pageX + 20) + 'px';
+            tooltip.style.top = (event.pageY - 40) + 'px';
+            tooltip.innerHTML = `<strong>${d.name}</strong><br>${d.type}`;
+        }
+
+        function hideTooltip() {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.style.opacity = 0;
+        }
+
+        // Close sidebar when clicking outside
+        document.getElementById('graph').addEventListener('click', function(e) {
+            if (e.target.tagName === 'svg') {
+                document.getElementById('sidebar').classList.remove('open');
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            config.width = window.innerWidth - 280;
+            config.height = window.innerHeight;
+            svg.attr('width', config.width).attr('height', config.height);
+            if (graphData.nodes.length > 0) {
+                renderGraph();
+            }
+        });
+
+        // Filter functions
+        function classifyNode(node) {
+            // Check relationships first (more reliable than text)
+            const incomingRels = graphData.links.filter(l => l.target.id === node.id);
+            const outgoingRels = graphData.links.filter(l => l.source.id === node.id);
+
+            // Check for relationship-based classification
+            const supersededByRel = incomingRels.some(r =>
+                r.type && (
+                    r.type.toLowerCase().includes('superseded') ||
+                    r.type.toLowerCase().includes('replaced') ||
+                    r.type.toLowerCase().includes('obsolete')
+                )
+            );
+
+            const invalidatedByRel = incomingRels.some(r =>
+                r.type && (
+                    r.type.toLowerCase().includes('invalidated') ||
+                    r.type.toLowerCase().includes('invalid') ||
+                    r.type.toLowerCase().includes('incorrect') ||
+                    r.type.toLowerCase().includes('fixes') ||
+                    r.type.toLowerCase().includes('corrects')
+                )
+            );
+
+            const deprecatedByRel = incomingRels.some(r =>
+                r.type && (
+                    r.type.toLowerCase().includes('deprecated') ||
+                    r.type.toLowerCase().includes('abandoned')
+                )
+            );
+
+            // Fallback to text-based classification if no relationships found
+            let isSuperseded = supersededByRel;
+            let isInvalidated = invalidatedByRel;
+            let isDeprecated = deprecatedByRel;
+
+            if (!isSuperseded && !isInvalidated && !isDeprecated) {
+                const name = node.name.toLowerCase();
+                const summary = (node.summary || '').toLowerCase();
+                const text = name + ' ' + summary;
+
+                isSuperseded = text.includes('superseded') ||
+                              text.includes('replaced by') ||
+                              text.includes('obsolete');
+
+                isInvalidated = text.includes('invalidated') ||
+                               text.includes('invalid') ||
+                               text.includes('incorrect') ||
+                               text.includes('wrong approach');
+
+                isDeprecated = text.includes('deprecated') ||
+                              text.includes('no longer') ||
+                              text.includes('abandoned');
+            }
+
+            const isActive = !isSuperseded && !isInvalidated && !isDeprecated;
+
+            return {
+                isActive,
+                isSuperseded,
+                isInvalidated,
+                isDeprecated,
+                incomingCount: incomingRels.length,
+                outgoingCount: outgoingRels.length
+            };
+        }
+
+        function applyFilters() {
+            if (!graphData.nodes.length) return;
+
+            const searchText = filterState.searchText;
+
+            d3.selectAll('.node').each(function(d) {
+                const classification = classifyNode(d);
+
+                // Check if node matches filter criteria
+                let showByStatus = false;
+                if (filterState.showActive && classification.isActive) showByStatus = true;
+                if (filterState.showSuperseded && classification.isSuperseded) showByStatus = true;
+                if (filterState.showInvalidated && classification.isInvalidated) showByStatus = true;
+                if (filterState.showDeprecated && classification.isDeprecated) showByStatus = true;
+
+                // Check search text
+                let showBySearch = true;
+                if (searchText) {
+                    const name = d.name.toLowerCase();
+                    const summary = (d.summary || '').toLowerCase();
+                    showBySearch = name.includes(searchText) || summary.includes(searchText);
+                }
+
+                const visible = showByStatus && showBySearch;
+
+                d3.select(this)
+                    .transition()
+                    .duration(300)
+                    .style('opacity', visible ? 1 : 0.1)
+                    .style('pointer-events', visible ? 'all' : 'none');
+            });
+
+            // Update links visibility
+            d3.selectAll('.link').each(function(d) {
+                const sourceClassification = classifyNode(d.source);
+                const targetClassification = classifyNode(d.target);
+
+                let sourceVisible = false;
+                if (filterState.showActive && sourceClassification.isActive) sourceVisible = true;
+                if (filterState.showSuperseded && sourceClassification.isSuperseded) sourceVisible = true;
+                if (filterState.showInvalidated && sourceClassification.isInvalidated) sourceVisible = true;
+                if (filterState.showDeprecated && sourceClassification.isDeprecated) sourceVisible = true;
+
+                let targetVisible = false;
+                if (filterState.showActive && targetClassification.isActive) targetVisible = true;
+                if (filterState.showSuperseded && targetClassification.isSuperseded) targetVisible = true;
+                if (filterState.showInvalidated && targetClassification.isInvalidated) targetVisible = true;
+                if (filterState.showDeprecated && targetClassification.isDeprecated) targetVisible = true;
+
+                // Check search for both nodes
+                if (searchText) {
+                    const sourceName = d.source.name.toLowerCase();
+                    const sourceSummary = (d.source.summary || '').toLowerCase();
+                    const sourceMatch = sourceName.includes(searchText) || sourceSummary.includes(searchText);
+
+                    const targetName = d.target.name.toLowerCase();
+                    const targetSummary = (d.target.summary || '').toLowerCase();
+                    const targetMatch = targetName.includes(searchText) || targetSummary.includes(searchText);
+
+                    sourceVisible = sourceVisible && sourceMatch;
+                    targetVisible = targetVisible && targetMatch;
+                }
+
+                const visible = sourceVisible && targetVisible;
+
+                d3.select(this)
+                    .transition()
+                    .duration(300)
+                    .style('opacity', visible ? 0.4 : 0.05);
+            });
+
+            // Update link labels
+            d3.selectAll('.link-label').each(function(d) {
+                const sourceClassification = classifyNode(d.source);
+                const targetClassification = classifyNode(d.target);
+
+                let sourceVisible = false;
+                if (filterState.showActive && sourceClassification.isActive) sourceVisible = true;
+                if (filterState.showSuperseded && sourceClassification.isSuperseded) sourceVisible = true;
+                if (filterState.showInvalidated && sourceClassification.isInvalidated) sourceVisible = true;
+                if (filterState.showDeprecated && sourceClassification.isDeprecated) sourceVisible = true;
+
+                let targetVisible = false;
+                if (filterState.showActive && targetClassification.isActive) targetVisible = true;
+                if (filterState.showSuperseded && targetClassification.isSuperseded) targetVisible = true;
+                if (filterState.showInvalidated && targetClassification.isInvalidated) targetVisible = true;
+                if (filterState.showDeprecated && targetClassification.isDeprecated) targetVisible = true;
+
+                if (searchText) {
+                    const sourceName = d.source.name.toLowerCase();
+                    const sourceSummary = (d.source.summary || '').toLowerCase();
+                    const sourceMatch = sourceName.includes(searchText) || sourceSummary.includes(searchText);
+
+                    const targetName = d.target.name.toLowerCase();
+                    const targetSummary = (d.target.summary || '').toLowerCase();
+                    const targetMatch = targetName.includes(searchText) || targetSummary.includes(searchText);
+
+                    sourceVisible = sourceVisible && sourceMatch;
+                    targetVisible = targetVisible && targetMatch;
+                }
+
+                const visible = sourceVisible && targetVisible;
+
+                d3.select(this)
+                    .transition()
+                    .duration(300)
+                    .style('opacity', visible ? 0.8 : 0);
+            });
+
+            // Update stats
+            const visibleCount = d3.selectAll('.node').filter(function() {
+                return parseFloat(d3.select(this).style('opacity')) > 0.5;
+            }).size();
+
+            const totalCount = graphData.nodes.length;
+            const statsText = `${visibleCount} / ${totalCount} entities • ${graphData.links.length} relationships`;
+            document.getElementById('stats').textContent = statsText;
+        }
+    </script>
+</body>
+</html>
+

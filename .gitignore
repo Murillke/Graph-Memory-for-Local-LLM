@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# OS generated files
+.DS_Store
+
+# Environments
+.env
+.venv
+venv/
+
+# Project Specific
+memory/
+tmp/
+llm_memory_dist/
+*.db
+*.graph
+quality-questions.json
+quality-answers.json
+*.log
+*.key
+*.pem
+*.token
+*.csr
+*.crt
