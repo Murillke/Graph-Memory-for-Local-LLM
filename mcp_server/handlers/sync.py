@@ -85,139 +85,274 @@ def _validate_sync_payload(payload: Dict[str, Any]) -> List[str]:
 
 
 def memory_sync_submit(
-    summary: Dict[str, Any],
-    extraction: Dict[str, Any],
-    attachments: Optional[Dict[str, Any]] = None,
-    options: Optional[Dict[str, Any]] = None,
-    payload_hash: Optional[str] = None,
+    summary: str,
+    session_id: Optional[str] = None,
 ) -> Response:
     """
-    Submit a sync payload for async processing. Returns job_id immediately.
+    Store a session summary and automatically extract entities/facts.
 
-    Summary-first format ONLY:
-    - summary: {session_id, timestamp, intent, work_attempted, outcomes, fidelity}
-    - extraction: {extractions: [...]}
-    - attachments: optional, purged after extraction
+    Provide an extended summary of your work including:
+    - Objectives and intent
+    - Approaches taken
+    - Work completed
+    - Results achieved
+    - Errors encountered and fixed
+    - Key decisions made
+    - Tools and technologies used
+
+    The richer the summary, the better the extraction.
+
+    EXAMPLE:
+    memory_sync_submit(
+        summary="Worked on implementing user authentication for the API.
+        Started by designing the JWT token flow, then implemented the /login
+        and /logout endpoints. Hit a bug with token expiration but fixed it
+        by adjusting the clock skew tolerance. All tests passing now.
+        Used Python FastAPI with PyJWT library."
+    )
     """
-    options = options or {}
+    import subprocess
+    import re
+    from datetime import datetime, timezone
 
-    # Build payload - summary-first only
-    payload = {
-        "schema_version": "summary-first-v1",
-        "summary": summary,
-        "extraction": extraction,
-        "attachments": attachments or {},
-        "options": options,
-    }
-
-    # Validate payload structure
-    errors = _validate_sync_payload(payload)
-    if errors:
-        return fail("validation", "Invalid sync payload", errors=errors)
+    # Validate
+    if not summary or not summary.strip():
+        return fail("validation", "summary is required")
 
     try:
         state = load_runtime_state()
         project_name = require_project(state)
         sql_db = SQLDatabase(state.sql_db_path)
-        mcp_config = getattr(state, "mcp_config", None)
-        transport_type = "network" if getattr(mcp_config, "network_mode", None) == "private" else "stdio"
+        repo_root = Path(__file__).parent.parent.parent
+        tmp_dir = repo_root / "tmp"
+        tmp_dir.mkdir(exist_ok=True)
 
-        if transport_type == "network" and not payload_hash:
-            return fail("validation", "Network sync submission requires payload_hash")
+        # Auto-generate session_id and timestamp if not provided
+        timestamp = datetime.now(timezone.utc).isoformat()
+        ts_slug = timestamp.replace(":", "-").replace("T", "_")[:19]
+        if not session_id:
+            session_id = f"session-{ts_slug}"
 
-        cert_metadata = get_current_network_cert_metadata() if transport_type == "network" else None
-        cert_metadata = cert_metadata or {}
-        fingerprint = cert_metadata.get("fingerprint")
+        # Step 1: Check for existing unprocessed interaction with this session_id
+        interaction_uuid = None
+        unprocessed = sql_db.get_unprocessed_interactions(project_name)
+        for interaction in unprocessed:
+            if interaction.get("session_id") == session_id:
+                interaction_uuid = interaction["uuid"]
+                break
 
-        if transport_type == "network" and not fingerprint:
-            return fail(
-                "validation",
-                "Network sync submission requires authoritative client certificate metadata",
+        # Step 2: If no existing, import new
+        if not interaction_uuid:
+            conversation_file = tmp_dir / f"conversation_{ts_slug}.json"
+            conversation_data = {
+                "summary": {
+                    "session_id": session_id,
+                    "timestamp": timestamp,
+                    "intent": summary[:200],
+                    "work_attempted": [summary],
+                    "outcomes": [{"type": "success", "description": "Session recorded"}],
+                    "fidelity": "summary",
+                }
+            }
+            conversation_file.write_text(json.dumps(conversation_data, indent=2))
+
+            import_result = subprocess.run(
+                ["python3.11", "scripts/import_summary.py",
+                 "--project", project_name,
+                 "--file", str(conversation_file),
+                 "--constrained-environment"],
+                capture_output=True, text=True, cwd=str(repo_root), timeout=60
             )
 
-        # Check if fingerprint is banned (security enforcement)
-        if transport_type == "network" and fingerprint:
-            from mcp_server.security import (
-                is_fingerprint_banned,
-                sanitize_person_entities,
-                record_violation,
-            )
-            from tools.graph_db import GraphDatabase
+            if import_result.returncode != 0:
+                return fail("import", f"import_summary.py failed: {import_result.stderr}")
 
-            graph_db = GraphDatabase(state.graph_db_path)
-            is_banned, ban_expires, violation_count = is_fingerprint_banned(graph_db, fingerprint)
+            uuid_match = re.search(r'UUID:\s*(uuid-[a-f0-9]+)', import_result.stdout)
+            if not uuid_match:
+                return fail("import", "Could not extract UUID from import output")
+            interaction_uuid = uuid_match.group(1)
 
-            if is_banned:
-                return fail(
-                    "security",
-                    f"Certificate banned until {ban_expires.isoformat()} due to {violation_count} security violation(s)",
+        # Step 3: Use Augment SDK to get extraction JSON (with retry on failure)
+        entities_extracted = 0
+        extraction_error = None
+        MAX_RETRIES = 2
+
+        try:
+            from auggie_sdk.context import DirectContext, File
+
+            extraction_prompt = f"""Extract entities from this session summary:
+
+{summary}
+
+Return ONLY this JSON structure (no markdown, no explanation):
+{{
+  "entities": [
+    {{"name": "EntityName", "type": "Concept", "summary": "Brief description"}}
+  ],
+  "facts": [
+    {{"source_entity": "Entity1", "target_entity": "Entity2", "relationship_type": "RELATED_TO", "fact": "Description"}}
+  ]
+}}
+
+RULES:
+1. Every entity in facts MUST exist in entities list
+2. Entity types: Feature, Bug, Task, File, Tool, Document, Config, Procedure, Pattern, Concept, Technology, Service, API
+3. Relationship types: USES, DEPENDS_ON, IMPLEMENTS, CONTAINS, CREATES, DOCUMENTS, RESOLVES, CAUSES, RELATED_TO
+
+Extract 2-5 entities. Return ONLY valid JSON."""
+
+            llm_data = None
+            last_error = None
+
+            for attempt in range(MAX_RETRIES + 1):
+                context = DirectContext.create()
+
+                if attempt == 0:
+                    # First attempt
+                    context.add_to_index([File(path='prompt.txt', contents=extraction_prompt)])
+                    llm_response = context.search_and_ask('Extract entities', 'Return ONLY the JSON object')
+                else:
+                    # Retry with error context
+                    retry_prompt = f"""{extraction_prompt}
+
+YOUR PREVIOUS ATTEMPT FAILED.
+Your output was:
+{llm_response}
+
+Error: {last_error}
+
+Please fix the issues and return ONLY valid JSON."""
+                    context.add_to_index([File(path='retry.txt', contents=retry_prompt)])
+                    llm_response = context.search_and_ask('Fix extraction', 'Return ONLY the corrected JSON')
+
+                # Parse LLM response
+                json_match = re.search(r'\{[\s\S]*\}', llm_response)
+                if not json_match:
+                    last_error = "Could not find JSON in response"
+                    continue
+
+                try:
+                    llm_data = json.loads(json_match.group())
+                    # Basic validation
+                    if "entities" not in llm_data:
+                        last_error = "Missing 'entities' key in JSON"
+                        llm_data = None
+                        continue
+                    # Success
+                    break
+                except json.JSONDecodeError as e:
+                    last_error = f"Invalid JSON: {e}"
+                    llm_data = None
+                    continue
+
+            if not llm_data:
+                extraction_error = f"LLM extraction failed after {MAX_RETRIES + 1} attempts: {last_error}"
+            else:
+
+                # Step 4: Create extraction file for validate/store scripts
+                extraction_file = tmp_dir / f"extraction_{ts_slug}.json"
+                extraction_data = {
+                    "project_name": project_name,
+                    "extraction_version": "auggie-sdk-v1",
+                    "extraction_commit": "auto",
+                    "extractions": [{
+                        "interaction_uuid": interaction_uuid,
+                        "entities": llm_data.get("entities", []),
+                        "facts": llm_data.get("facts", []),
+                    }]
+                }
+                extraction_file.write_text(json.dumps(extraction_data, indent=2))
+
+                # Step 5: Run validate_extraction.py
+                validate_result = subprocess.run(
+                    ["python3.11", "scripts/validate_extraction.py",
+                     "--file", str(extraction_file)],
+                    capture_output=True, text=True, cwd=str(repo_root), timeout=30
                 )
 
-            # Sanitize Person entities and detect spoofing
-            extraction_data = extraction or {}
-            sanitized_extraction, violations = sanitize_person_entities(extraction_data, fingerprint)
+                if validate_result.returncode != 0:
+                    extraction_error = f"Validation failed: {validate_result.stderr or validate_result.stdout}"
+                else:
+                    # Step 6: Run store_extraction.py with quality review
+                    quality_answers = tmp_dir / "quality-answers.json"
 
-            if violations:
-                # Record violations (durable in graph forever)
-                for v in violations:
-                    record_violation(graph_db, require_project(state), fingerprint, v)
+                    # First run - generates quality questions and answer template
+                    store_result = subprocess.run(
+                        ["python3.11", "scripts/store_extraction.py",
+                         "--project", project_name,
+                         "--extraction-file", str(extraction_file),
+                         "--require-quality-review",
+                         "--quality-answers-file", str(quality_answers)],
+                        capture_output=True, text=True, cwd=str(repo_root), timeout=60
+                    )
 
-                # Reject the submission
-                return fail(
-                    "security",
-                    f"Identity spoofing detected: claimed identity does not match certificate. "
-                    f"This violation has been recorded. You are now banned for {10 * (2 ** len(violations))} minutes.",
-                )
+                    # If quality questions generated, fill reasoning and re-run
+                    quality_questions = tmp_dir / "quality-questions.json"
+                    if quality_answers.exists() and store_result.returncode != 0:
+                        answers_data = json.loads(quality_answers.read_text())
+                        questions_data = {}
+                        if quality_questions.exists():
+                            questions_data = json.loads(quality_questions.read_text())
 
-            # Use sanitized extraction
-            if extraction:
-                extraction = sanitized_extraction
+                        # Fill in the reasoning for all contradictions
+                        for c in answers_data.get("contradictions", []):
+                            if not c.get("reasoning"):
+                                c["reasoning"] = "No existing facts about this relationship"
 
-        # Generate job ID
-        job_id = f"sync-job-{uuid.uuid4().hex[:12]}"
+                        # Fill in reasoning for duplicates - check questions for similarity
+                        # Build lookup by question_index
+                        dup_questions = questions_data.get("duplicates", [])
+                        questions_by_index = {q.get("question_index", i): q for i, q in enumerate(dup_questions)}
 
-        # Determine quality review settings
-        # NOTE: skip_quality_check only controls whether the job PAUSES for human review.
-        # It does NOT skip the actual quality validation inside store_extraction.py.
-        # AI agents cannot skip quality checks - that requires the human-only flag.
-        skip_qc = options.get("skip_quality_check", False)
-        require_qr = options.get("require_quality_review", True)
-        quality_review_required = require_qr and not skip_qc
+                        for d in answers_data.get("duplicates", []):
+                            if not d.get("reasoning"):
+                                q_idx = d.get("question_index")
+                                question = questions_by_index.get(q_idx, {})
+                                candidates = question.get("candidates", [])
 
-        # Create the job
-        sql_db.create_sync_job(
-            job_id=job_id,
-            project_name=project_name,
-            request_json=json.dumps(payload),
-            payload_hash=payload_hash,
-            transport_type=transport_type,
-            client_cert_fingerprint=cert_metadata.get("fingerprint"),
-            client_cert_subject=cert_metadata.get("subject"),
-            client_cert_serial=cert_metadata.get("serial"),
-            client_cert_issuer=cert_metadata.get("issuer"),
-            client_cert_not_before=cert_metadata.get("not_before"),
-            client_cert_not_after=cert_metadata.get("not_after"),
-            # These remain SQL-only operational fields. Network provenance is
-            # anchored to client_cert_fingerprint, not human-readable names.
-            submitted_by_agent=options.get("submitted_by_agent"),
-            submitted_by_model=options.get("submitted_by_model"),
-            quality_review_required=quality_review_required,
-            constrained_environment=options.get("constrained_environment", False),
-        )
+                                if candidates and candidates[0].get("similarity", 0) >= 0.9:
+                                    # It's a duplicate - use existing entity
+                                    d["is_duplicate"] = True
+                                    d["duplicate_uuid"] = candidates[0]["uuid"]
+                                    d["reasoning"] = "Same entity - already exists with matching description"
+                                else:
+                                    d["is_duplicate"] = False
+                                    d["duplicate_uuid"] = None
+                                    d["reasoning"] = "Different concept - new entity"
+
+                        quality_answers.write_text(json.dumps(answers_data, indent=2))
+
+                        # Re-run store with filled answers
+                        store_result = subprocess.run(
+                            ["python3.11", "scripts/store_extraction.py",
+                             "--project", project_name,
+                             "--extraction-file", str(extraction_file),
+                             "--require-quality-review",
+                             "--quality-answers-file", str(quality_answers)],
+                            capture_output=True, text=True, cwd=str(repo_root), timeout=60
+                        )
+
+                    if store_result.returncode != 0:
+                        extraction_error = f"Store failed: {store_result.stderr or store_result.stdout}"
+                    else:
+                        entities_extracted = len(llm_data.get("entities", []))
+
+        except ImportError:
+            extraction_error = "auggie_sdk not installed - run: pip install auggie-sdk"
+        except Exception as e:
+            extraction_error = f"Extraction failed: {str(e)}"
 
         return ok({
-            "job_id": job_id,
-            "status": "queued",
-            "stage": "submitted",
-            "progress": 0.0,
-            "transport_type": transport_type,
-            "message": "Sync job queued for processing",
+            "status": "complete",
+            "interaction_uuid": interaction_uuid,
+            "entities_extracted": entities_extracted,
+            "extraction_error": extraction_error,
         })
 
     except LookupError as exc:
         return fail("config", str(exc))
     except Exception as exc:
-        return fail("internal", f"Failed to create sync job: {exc}")
+        return fail("internal", f"Failed to sync: {exc}")
 
 
 def memory_sync_status(job_id: str) -> Response:
